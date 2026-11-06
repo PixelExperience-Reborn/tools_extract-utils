@@ -17,7 +17,7 @@ The review uses the immutable **LineageOS `android_tools_extract-utils` `lineage
 - Source commit **`78ba5d58c4b06712e18bb387a2a72eac8fbc8d70`** (2026-10-17).
 - Exact upstream root tree **`00c1a5a4a08c8e4854992879c181c47f4c71dc19`** with **47 Git blobs** across the modern Python package, templates, source manifests and license text.
 - Main Python package `extract_utils/`, entrypoint `extract.py`, `convert_dump.py`, `sdat2img.py`, `sort-blobs-list.py`, Python templates, `LICENSES/` and `REUSE.toml`. There is a source symlink `templates/multi-device/common -> ../single-device`.
-- Historic PE `seventeen` sources remain **preserved in Git history**; the isolated integration branch records a genuine **two-parent Git merge** with first parent the original PE SHA and second parent this pinned upstream commit. Its resulting source tree is required to be **exactly** the pinned upstream tree (not a hand-edited approximation or forced branch rewrite).
+- Historic PE `seventeen` sources remain **preserved in Git history**. The isolated integration branch contains a genuine **two-parent Git merge** at [`3cdbdc12946667fc1a9b1ebff79125ed23957fb7`](https://github.com/PixelExperience-Reborn/tools_extract-utils/commit/3cdbdc12946667fc1a9b1ebff79125ed23957fb7): first parent the original PE SHA; second parent the pinned modern upstream SHA. The integrated root tree is **`90c1cb94816aa224cb4bc8146b1913b7bdcd6c5b`**, exactly the upstream functional sources **minus two upstream-only Gerrit GitHub Actions files** (`.github/workflows/build/action.yml`, `.github/workflows/gerrit.yml`). Those two exclusions are required to avoid importing unrelated CI integrations; no Python code, license, template or source file was edited. Source parity is verified by an exact two-file Git diff.
 - The upstream work is an **extraction host utility**, not a decision to base the new PE-Reborn ROM/frameworks/device trees on LineageOS. Keep its original copyright and license headers intact. Review any later independent PE-specific modifications separately.
 - Pinning this snapshot does not imply it stays current forever; future upstream updates require separate review.
 
@@ -45,12 +45,12 @@ The archived `prebuilts_extract-tools` at row 158 contains **neither `patchelf-0
 
 ## CI/source-only acceptance
 
-1. The exact upstream SHA/tree is independently verified, with original PE head first parent; import is a **real two-parent merge**, not a branch rename or shallow content copy.
-2. Candidate has **exactly** the pinned modern upstream Git tree. Old Bash extractor/template files must not remain active. Licenses are retained.
+1. The exact upstream SHA/tree is independently verified, with original PE head first parent; import is a **real two-parent merge**, not a branch rename or shallow content copy. Historical SHA `74d64169`, modern SHA `78ba5d58`, imported merge SHA `3cdbdc1` and sanitized tree SHA `90c1cb9` are all verified on GitHub.
+2. Candidate matches the pinned upstream tree **before excluding the two unrelated upstream CI files**; the final sanitized source tree differs from the upstream by exactly those two deletions, and all modern extraction code/templates/licenses match. Old Bash extractor/template files must not remain active.
 3. Parse every Python file and statically verify the API `ExtractUtils.device_with_common`, `ExtractUtils.device`, `ExtractUtilsModule`, and `blob_fixup` methods used by read-only mondrian/common.
 4. Assert ELF checking defaults to enabled and record the host tool/Lineage script path gap; test metadata must be explicit.
-5. Keep AOSP17 `default.xml` unchanged, with **no** `tools/extract-utils` owner, no PE device tree, no old `prebuilts/extract-tools`, no old `prebuilts/tools-custom`, and no duplicate projects. Run manifest validator and official repo graph parser.
-6. The isolated integration branch may be updated only after an initial dry-run passes all source-only gates; no push to `seventeen` or automatic PR merge.
+5. Keep AOSP17 `default.xml` unchanged, with **no** `tools/extract-utils` owner, no PE device tree, no old `prebuilts/extract-tools`, no old `prebuilts/tools-custom`, and no duplicate projects. AOSP17 manifest validator now explicitly rejects premature extractor import and includes a negative regression test. All 25 reviewed source profiles, **12 regression tests** and the official `repo manifest` graph (1069 selected projects) passed in [CI #42249252301](https://github.com/PixelExperience-Reborn/tools_extract-utils/actions/runs/42249252301).
+6. The isolated integration branch was pushed after initial source preflight PASS, and its exact two-parent ancestry and tree were confirmed via GitHub API. Subsequent workflow runs are idempotent and refuse unknown commits. The original `seventeen` SHA is unchanged; no automatic PR merge.
 
 ## Remaining work, not falsely marked complete
 
@@ -67,4 +67,4 @@ The archived `prebuilts_extract-tools` at row 158 contains **neither `patchelf-0
 - Existing device references (read-only): https://github.com/LF52406/mondrian_android_device_xiaomi_mondrian/blob/lineage-24.0/extract-files.py and https://github.com/LF52406/mondrian_android_device_xiaomi_sm8450-common/blob/lineage-24.0/extract-files.py
 - Reviewed AOSP17 manifest: https://github.com/PixelExperience-Reborn/manifest/tree/port/a17-aosp17-manifest-20261102
 
-**Status:** exact Python source snapshot with unverified host dependencies; not an accepted Android17 ROM/device extraction workflow.
+**Status (verified 2026-11-06):** modern Python source imported into an **isolated Draft PR**, with 36 Python source syntax checks and source/manifest CI PASS. Three required host binaries, Lineage-specific helper path, OTA/vendor extraction and device/Soong integration remain OPEN. Not an accepted Android17 ROM/device extraction workflow.
