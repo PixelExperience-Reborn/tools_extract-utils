@@ -90,3 +90,53 @@ jobs:
         run: |
           echo "PASS: candidate generated and verified locally in runner, NOT pushed."
           echo "NOT TESTED: runtime host dependencies, vendor blob extraction, complete build or device."
+
+  publish-tested-source-branch:
+    needs: source-preflight
+    if: github.event_name == 'push' && github.ref == 'refs/heads/audit/a17-python-extract-utils-20261106'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout audit script with scoped GitHub push token
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publish only reviewed two-parent source commit to isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE=74d64169def22130dde0103844260cd4d7498085
+          UPSTREAM=78ba5d58c4b06712e18bb387a2a72eac8fbc8d70
+          TREE=00c1a5a4a08c8e4854992879c181c47f4c71dc19
+          BRANCH=integrate/a17-python-extract-utils-20261106
+          URL=https://github.com/PixelExperience-Reborn/tools_extract-utils.git
+          current=$(git ls-remote "$URL" "refs/heads/$BRANCH" | cut -f1)
+          test -n "$current" || { echo "FAIL: isolated integration branch missing"; exit 1; }
+          if [[ "$current" != "$BASE" ]]; then
+            git clone -q --filter=blob:none --branch "$BRANCH" "$URL" "$RUNNER_TEMP/existing"
+            head=$(git -C "$RUNNER_TEMP/existing" rev-parse HEAD)
+            tree=$(git -C "$RUNNER_TEMP/existing" rev-parse 'HEAD^{tree}')
+            parents=$(git -C "$RUNNER_TEMP/existing" rev-list --parents -n 1 HEAD)
+            if [[ "$head" == "$current" && "$tree" == "$TREE" && \
+                  "$parents" == "$head $BASE $UPSTREAM" ]]; then
+              echo "PASS: isolated two-parent source branch already published and pinned; no push"
+              exit 0
+            fi
+            echo "FAIL: branch has new/unreviewed commits; refusing to overwrite" >&2
+            exit 1
+          fi
+          bash audit/build_candidate.sh "$RUNNER_TEMP/candidate-for-publish"
+          staged=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse HEAD)
+          staged_tree=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse 'HEAD^{tree}')
+          test "$staged_tree" = "$TREE"
+          encoded=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -C "$RUNNER_TEMP/candidate-for-publish" \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $encoded" \
+            push --porcelain origin "HEAD:refs/heads/$BRANCH"
+          remote_now=$(git ls-remote "$URL" "refs/heads/$BRANCH" | cut -f1)
+          test "$remote_now" = "$staged" || { echo "FAIL: published SHA mismatch"; exit 1; }
+          echo "PASS: isolated integration branch published at $staged"
+          echo "PASS: PE original first parent, modern upstream second parent, exact upstream tree"
