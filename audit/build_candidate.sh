@@ -51,6 +51,21 @@ if [[ "$tree" != "$UPSTREAM_TREE" ]]; then
     echo "FAIL: staged source tree differs from pinned upstream ($tree)" >&2
     exit 1
 fi
+# GitHub App has no workflows permission: vendor-owned Gerrit CI workflow
+# files must NOT be imported into PE-Reborn. They are not part of the
+# functional extraction library. First verify the full pinned upstream tree,
+# then delete ONLY these two unrelated metadata files from the merge result.
+git -C "$TARGET" rm -q -- \
+    .github/workflows/build/action.yml .github/workflows/gerrit.yml
+difference=$(git -C "$TARGET" diff --cached --name-status "$UPSTREAM_COMMIT")
+expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+if [[ "$difference" != "$expected" ]]; then
+    echo "FAIL: unexpected changes from modern upstream: $difference" >&2
+    exit 1
+fi
+accepted_tree=$(git -C "$TARGET" write-tree)
+echo "PASS: modern Python source exact except two excluded upstream Gerrit CI files"
+echo "PASS: reviewed import tree $accepted_tree"
 if [[ -e "$TARGET/extract_utils.sh" ]] || [[ -e "$TARGET/templates/single-device/extract-files.sh" ]]; then
     echo "FAIL: old PE shell extraction scripts survived" >&2
     exit 1
@@ -102,8 +117,9 @@ git -C "$TARGET" -c commit.gpgsign=false commit -qm \
     "tools: import reviewed modern Python extraction source for Android 17
 
 Preserve old PixelExperience source history and upstream LineageOS 24.0
-history as two Git parents. The content is an EXACT upstream source tree:
-$UPSTREAM_TREE from $UPSTREAM_COMMIT.
+history as two Git parents. Functional source is EXACTLY:
+$UPSTREAM_TREE from $UPSTREAM_COMMIT, except two unrelated upstream
+.github/workflows Gerrit metadata files excluded for source ownership.
 
 SOURCE ONLY. No PE mondrian device tree, proprietary prebuilts, product
 module, or default Android17 manifest import. Runtime vendor extraction
@@ -115,12 +131,12 @@ if [[ -n "${extra:-}" || "$parent1" != "$PE_COMMIT" || "$parent2" != "$UPSTREAM_
     echo "FAIL: resulting commit does not have exact PE and modern upstream parents" >&2
     exit 1
 fi
-if [[ "$(git -C "$TARGET" rev-parse 'HEAD^{tree}')" != "$UPSTREAM_TREE" ]]; then
-    echo "FAIL: committed tree is not the exact reviewed modern source" >&2
+if [[ "$(git -C "$TARGET" rev-parse 'HEAD^{tree}')" != "$accepted_tree" ]]; then
+    echo "FAIL: committed tree is not the audited upstream source-minus-workflows" >&2
     exit 1
 fi
 
-printf 'PASS: exact upstream source tree %s\n' "$UPSTREAM_TREE"
+printf 'PASS: exact upstream code source tree %s\n' "$UPSTREAM_TREE"
 printf 'PASS: PE legacy parent %s\n' "$parent1"
 printf 'PASS: upstream modern parent %s\n' "$parent2"
 printf 'PASS: local candidate merge %s (not pushed)\n' "$commit"
