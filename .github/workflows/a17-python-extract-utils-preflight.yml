@@ -1,0 +1,166 @@
+name: AOSP17 extract-utils modern Python merge preflight
+
+on:
+  push:
+    branches:
+      - audit/a17-python-extract-utils-20261106
+    paths:
+      - 'audit/**'
+      - 'docs/ANDROID_17_EXTRACT_UTILS_SOURCE_PORT_AUDIT.md'
+      - '.github/workflows/a17-python-extract-utils-preflight.yml'
+  pull_request:
+    paths:
+      - 'audit/**'
+      - 'docs/ANDROID_17_EXTRACT_UTILS_SOURCE_PORT_AUDIT.md'
+      - '.github/workflows/a17-python-extract-utils-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout source-audit scripts (never old shell binaries)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prepare two-parent exact modern Python source candidate
+        run: |
+          bash audit/build_candidate.sh "$RUNNER_TEMP/extract-utils-candidate"
+      - name: Verify no old PE shell files and upstream licenses retained
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          p = Path(os.environ['RUNNER_TEMP']) / 'extract-utils-candidate'
+          names = set(subprocess.check_output(
+              ['git', '-C', str(p), 'ls-files'], text=True).splitlines())
+          assert 'extract_utils.sh' not in names
+          assert 'templates/single-device/extract-files.sh' not in names
+          assert 'templates/multi-device/common/extract-files.sh' not in names
+          assert 'extract_utils/main.py' in names
+          assert 'extract_utils/fixups_blob.py' in names
+          assert {'LICENSES/Apache-2.0.txt', 'LICENSES/MIT.txt', 'REUSE.toml'}.issubset(names)
+          assert 'templates/multi-device/common' in names
+          assert not (p / 'templates/multi-device/common').is_dir() or (
+              p / 'templates/multi-device/common').is_symlink()
+          import ast
+          python_files = sorted(p.rglob('*.py'))
+          assert len(python_files) == 36, len(python_files)
+          for file in python_files:
+              ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
+          print('PASS: 36 modern Python files syntax-checked, original licenses retained')
+          print('PASS: modern Python sources/license preserved, old shell files excluded')
+          PY
+      - name: Read AOSP17 staged default manifest without import
+        run: |
+          git clone -q --depth=1 \
+            --branch port/a17-aosp17-manifest-20261102 \
+            https://github.com/PixelExperience-Reborn/manifest.git \
+            "$RUNNER_TEMP/manifest"
+          cd "$RUNNER_TEMP/manifest"
+          python3 tools/validate_aosp17_base_profiles.py
+          python3 -m unittest discover -s tools \
+            -p 'test_aosp17_manifest_entrypoint.py' -v
+      - name: Verify exact external host dependency gaps without executing binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/PixelExperience-Reborn/prebuilts_extract-tools/git/trees/d075fe2289fab010490e30f5f1454f88a74b793d?recursive=1" \
+            -o "$RUNNER_TEMP/old-extract-binaries-tree.json"
+          python3 audit/check_host_gaps.py \
+            "$RUNNER_TEMP/extract-utils-candidate" \
+            "$RUNNER_TEMP/manifest" \
+            "$RUNNER_TEMP/old-extract-binaries-tree.json"
+      - name: Parse selected source graph with official repo client
+        run: |
+          curl --fail --silent --show-error --location \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/repo-graph"
+          cd "$RUNNER_TEMP/repo-graph"
+          "$RUNNER_TEMP/repo" init -q --no-clone-bundle \
+            -u https://github.com/PixelExperience-Reborn/manifest \
+            -b port/a17-aosp17-manifest-20261102 -m default.xml
+          "$RUNNER_TEMP/repo" manifest -o "$RUNNER_TEMP/resolved.xml"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import xml.etree.ElementTree as ET
+          doc = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'resolved.xml').getroot()
+          projects = doc.findall('.//project')
+          selected = {p.get('path') or p.get('name'): p.get('name') for p in projects}
+          assert len(selected) == len(projects) == 1069, len(projects)
+          assert 'tools/extract-utils' not in selected
+          assert 'tools_extract-utils' not in selected.values()
+          assert 'prebuilts/extract-tools' not in selected
+          assert 'prebuilts/tools-custom' not in selected
+          print('PASS: AOSP17 repo manifest retains 1069 unique projects with extraction tooling staged OFF')
+          PY
+      - name: Scope gate
+        run: |
+          echo "PASS: candidate generated and verified locally in runner, NOT pushed."
+          echo "NOT TESTED: runtime host dependencies, vendor blob extraction, complete build or device."
+
+  publish-tested-source-branch:
+    needs: source-preflight
+    if: github.event_name == 'push' && github.ref == 'refs/heads/audit/a17-python-extract-utils-20261106'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout audit script with scoped GitHub push token
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publish only reviewed two-parent source commit to isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE=74d64169def22130dde0103844260cd4d7498085
+          UPSTREAM=78ba5d58c4b06712e18bb387a2a72eac8fbc8d70
+          TREE=00c1a5a4a08c8e4854992879c181c47f4c71dc19
+          BRANCH=integrate/a17-python-extract-utils-20261106
+          URL=https://github.com/PixelExperience-Reborn/tools_extract-utils.git
+          current=$(git ls-remote "$URL" "refs/heads/$BRANCH" | cut -f1)
+          test -n "$current" || { echo "FAIL: isolated integration branch missing"; exit 1; }
+          if [[ "$current" != "$BASE" ]]; then
+            git clone -q --filter=blob:none --branch "$BRANCH" "$URL" "$RUNNER_TEMP/existing"
+            head=$(git -C "$RUNNER_TEMP/existing" rev-parse HEAD)
+            tree=$(git -C "$RUNNER_TEMP/existing" rev-parse 'HEAD^{tree}')
+            parents=$(git -C "$RUNNER_TEMP/existing" rev-list --parents -n 1 HEAD)
+            diff=$(git -C "$RUNNER_TEMP/existing" diff --name-status "$UPSTREAM" HEAD)
+            expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+            if [[ "$head" == "$current" && "$tree" != "$TREE" && \
+                  "$parents" == "$head $BASE $UPSTREAM" && "$diff" == "$expected" ]]; then
+              echo "PASS: isolated two-parent source branch already published and pinned; no push"
+              exit 0
+            fi
+            echo "FAIL: branch has new/unreviewed commits; refusing to overwrite" >&2
+            exit 1
+          fi
+          bash audit/build_candidate.sh "$RUNNER_TEMP/candidate-for-publish"
+          staged=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse HEAD)
+          staged_tree=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse 'HEAD^{tree}')
+          test "$staged_tree" != "$TREE"
+          changes=$(git -C "$RUNNER_TEMP/candidate-for-publish" diff --name-status "$UPSTREAM" HEAD)
+          expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+          test "$changes" = "$expected"
+          encoded=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -C "$RUNNER_TEMP/candidate-for-publish" \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $encoded" \
+            push --porcelain origin "HEAD:refs/heads/$BRANCH"
+          remote_now=$(git ls-remote "$URL" "refs/heads/$BRANCH" | cut -f1)
+          test "$remote_now" = "$staged" || { echo "FAIL: published SHA mismatch"; exit 1; }
+          echo "PASS: isolated integration branch published at $staged"
+          echo "PASS: PE original first parent, upstream second parent; functional source exact minus two upstream workflow files"
