@@ -48,6 +48,12 @@ jobs:
           assert 'templates/multi-device/common' in names
           assert not (p / 'templates/multi-device/common').is_dir() or (
               p / 'templates/multi-device/common').is_symlink()
+          import ast
+          python_files = sorted(p.rglob('*.py'))
+          assert len(python_files) == 36, len(python_files)
+          for file in python_files:
+              ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
+          print('PASS: 36 modern Python files syntax-checked, original licenses retained')
           print('PASS: modern Python sources/license preserved, old shell files excluded')
           PY
       - name: Read AOSP17 staged default manifest without import
@@ -60,6 +66,19 @@ jobs:
           python3 tools/validate_aosp17_base_profiles.py
           python3 -m unittest discover -s tools \
             -p 'test_aosp17_manifest_entrypoint.py' -v
+      - name: Verify exact external host dependency gaps without executing binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/PixelExperience-Reborn/prebuilts_extract-tools/git/trees/d075fe2289fab010490e30f5f1454f88a74b793d?recursive=1" \
+            -o "$RUNNER_TEMP/old-extract-binaries-tree.json"
+          python3 audit/check_host_gaps.py \
+            "$RUNNER_TEMP/extract-utils-candidate" \
+            "$RUNNER_TEMP/manifest" \
+            "$RUNNER_TEMP/old-extract-binaries-tree.json"
       - name: Parse selected source graph with official repo client
         run: |
           curl --fail --silent --show-error --location \
