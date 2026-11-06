@@ -24,7 +24,11 @@ if [[ "$head" != "$PE_COMMIT" ]]; then
 fi
 
 # Fetch the pinned *commit*, never a floating upstream branch.
-git -C "$TARGET" fetch --quiet --no-tags --depth=1 "$UPSTREAM" "$UPSTREAM_COMMIT"
+# A pushed merge requires the COMPLETE reachable Git history of its
+# second parent. A shallow fetch can pass local tree checks but will make
+# GitHub reject the push due to missing upstream ancestor objects.
+git -C "$TARGET" fetch --quiet --no-tags "$UPSTREAM" "$UPSTREAM_COMMIT"
+git -C "$TARGET" cat-file -e "ff6589c6b0a4a00c592e98940e9e6b6a50c76569^{commit}"
 source_commit=$(git -C "$TARGET" rev-parse 'FETCH_HEAD^{commit}')
 source_tree=$(git -C "$TARGET" rev-parse 'FETCH_HEAD^{tree}')
 if [[ "$source_commit" != "$UPSTREAM_COMMIT" || "$source_tree" != "$UPSTREAM_TREE" ]]; then
