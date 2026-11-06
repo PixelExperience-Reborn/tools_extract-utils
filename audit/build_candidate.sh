@@ -55,7 +55,7 @@ fi
 # files must NOT be imported into PE-Reborn. They are not part of the
 # functional extraction library. First verify the full pinned upstream tree,
 # then delete ONLY these two unrelated metadata files from the merge result.
-git -C "$TARGET" rm -q -- \
+git -C "$TARGET" rm -f -q -- \
     .github/workflows/build/action.yml .github/workflows/gerrit.yml
 difference=$(git -C "$TARGET" diff --cached --name-status "$UPSTREAM_COMMIT")
 expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
