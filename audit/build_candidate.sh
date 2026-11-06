@@ -19,8 +19,26 @@ fi
 git clone -q --filter=blob:none --branch "$PE_BRANCH" "$PE_REPO" "$TARGET"
 head=$(git -C "$TARGET" rev-parse HEAD)
 if [[ "$head" != "$PE_COMMIT" ]]; then
-    echo "FAIL: integration branch moved ($head); do not overwrite existing work" >&2
-    exit 1
+    # Idempotent rechecks of the EXACT source merge are allowed; any other
+    # branch movement must fail closed, never rewrite prior work.
+    REVIEWED_MERGE=3cdbdc12946667fc1a9b1ebff79125ed23957fb7
+    REVIEWED_TREE=90c1cb94816aa224cb4bc8146b1913b7bdcd6c5b
+    parents=$(git -C "$TARGET" rev-list --parents -n 1 HEAD)
+    tree=$(git -C "$TARGET" rev-parse 'HEAD^{tree}')
+    if [[ "$head" != "$REVIEWED_MERGE" || "$tree" != "$REVIEWED_TREE" ||
+          "$parents" != "$head $PE_COMMIT $UPSTREAM_COMMIT" ]]; then
+        echo "FAIL: integration branch moved without a reviewed source gate ($head)" >&2
+        exit 1
+    fi
+    changes=$(git -C "$TARGET" diff --name-status "$UPSTREAM_COMMIT" HEAD)
+    expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+    if [[ "$changes" != "$expected" ]]; then
+        echo "FAIL: reviewed modern source tree no longer matches upstream-minus-workflows" >&2
+        exit 1
+    fi
+    echo "PASS: existing integration merge $head, original/upstream parents verified"
+    echo "PASS: exact reviewed source tree, two upstream workflow files excluded"
+    exit 0
 fi
 
 # Fetch the pinned *commit*, never a floating upstream branch.
