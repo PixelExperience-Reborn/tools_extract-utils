@@ -1,0 +1,92 @@
+name: AOSP17 extract-utils modern Python merge preflight
+
+on:
+  push:
+    branches:
+      - audit/a17-python-extract-utils-20261106
+    paths:
+      - 'audit/**'
+      - 'docs/ANDROID_17_EXTRACT_UTILS_SOURCE_PORT_AUDIT.md'
+      - '.github/workflows/a17-python-extract-utils-preflight.yml'
+  pull_request:
+    paths:
+      - 'audit/**'
+      - 'docs/ANDROID_17_EXTRACT_UTILS_SOURCE_PORT_AUDIT.md'
+      - '.github/workflows/a17-python-extract-utils-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout source-audit scripts (never old shell binaries)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prepare two-parent exact modern Python source candidate
+        run: |
+          bash audit/build_candidate.sh "$RUNNER_TEMP/extract-utils-candidate"
+      - name: Verify no old PE shell files and upstream licenses retained
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          p = Path(os.environ['RUNNER_TEMP']) / 'extract-utils-candidate'
+          names = set(subprocess.check_output(
+              ['git', '-C', str(p), 'ls-files'], text=True).splitlines())
+          assert 'extract_utils.sh' not in names
+          assert 'templates/single-device/extract-files.sh' not in names
+          assert 'templates/multi-device/common/extract-files.sh' not in names
+          assert 'extract_utils/main.py' in names
+          assert 'extract_utils/fixups_blob.py' in names
+          assert {'LICENSES/Apache-2.0.txt', 'LICENSES/MIT.txt', 'REUSE.toml'}.issubset(names)
+          assert 'templates/multi-device/common' in names
+          assert not (p / 'templates/multi-device/common').is_dir() or (
+              p / 'templates/multi-device/common').is_symlink()
+          print('PASS: modern Python sources/license preserved, old shell files excluded')
+          PY
+      - name: Read AOSP17 staged default manifest without import
+        run: |
+          git clone -q --depth=1 \
+            --branch port/a17-aosp17-manifest-20261102 \
+            https://github.com/PixelExperience-Reborn/manifest.git \
+            "$RUNNER_TEMP/manifest"
+          cd "$RUNNER_TEMP/manifest"
+          python3 tools/validate_aosp17_base_profiles.py
+          python3 -m unittest discover -s tools \
+            -p 'test_aosp17_manifest_entrypoint.py' -v
+      - name: Parse selected source graph with official repo client
+        run: |
+          curl --fail --silent --show-error --location \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/repo-graph"
+          cd "$RUNNER_TEMP/repo-graph"
+          "$RUNNER_TEMP/repo" init -q --no-clone-bundle \
+            -u https://github.com/PixelExperience-Reborn/manifest \
+            -b port/a17-aosp17-manifest-20261102 -m default.xml
+          "$RUNNER_TEMP/repo" manifest -o "$RUNNER_TEMP/resolved.xml"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import xml.etree.ElementTree as ET
+          doc = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'resolved.xml').getroot()
+          projects = doc.findall('.//project')
+          selected = {p.get('path') or p.get('name'): p.get('name') for p in projects}
+          assert len(selected) == len(projects) == 1069, len(projects)
+          assert 'tools/extract-utils' not in selected
+          assert 'tools_extract-utils' not in selected.values()
+          assert 'prebuilts/extract-tools' not in selected
+          assert 'prebuilts/tools-custom' not in selected
+          print('PASS: AOSP17 repo manifest retains 1069 unique projects with extraction tooling staged OFF')
+          PY
+      - name: Scope gate
+        run: |
+          echo "PASS: candidate generated and verified locally in runner, NOT pushed."
+          echo "NOT TESTED: runtime host dependencies, vendor blob extraction, complete build or device."
