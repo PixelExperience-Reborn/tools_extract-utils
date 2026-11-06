@@ -120,8 +120,10 @@ jobs:
             head=$(git -C "$RUNNER_TEMP/existing" rev-parse HEAD)
             tree=$(git -C "$RUNNER_TEMP/existing" rev-parse 'HEAD^{tree}')
             parents=$(git -C "$RUNNER_TEMP/existing" rev-list --parents -n 1 HEAD)
-            if [[ "$head" == "$current" && "$tree" == "$TREE" && \
-                  "$parents" == "$head $BASE $UPSTREAM" ]]; then
+            diff=$(git -C "$RUNNER_TEMP/existing" diff --name-status "$UPSTREAM" HEAD)
+            expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+            if [[ "$head" == "$current" && "$tree" != "$TREE" && \
+                  "$parents" == "$head $BASE $UPSTREAM" && "$diff" == "$expected" ]]; then
               echo "PASS: isolated two-parent source branch already published and pinned; no push"
               exit 0
             fi
@@ -131,7 +133,10 @@ jobs:
           bash audit/build_candidate.sh "$RUNNER_TEMP/candidate-for-publish"
           staged=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse HEAD)
           staged_tree=$(git -C "$RUNNER_TEMP/candidate-for-publish" rev-parse 'HEAD^{tree}')
-          test "$staged_tree" = "$TREE"
+          test "$staged_tree" != "$TREE"
+          changes=$(git -C "$RUNNER_TEMP/candidate-for-publish" diff --name-status "$UPSTREAM" HEAD)
+          expected=$(printf 'D\t.github/workflows/build/action.yml\nD\t.github/workflows/gerrit.yml')
+          test "$changes" = "$expected"
           encoded=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -C "$RUNNER_TEMP/candidate-for-publish" \
             -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $encoded" \
@@ -139,4 +144,4 @@ jobs:
           remote_now=$(git ls-remote "$URL" "refs/heads/$BRANCH" | cut -f1)
           test "$remote_now" = "$staged" || { echo "FAIL: published SHA mismatch"; exit 1; }
           echo "PASS: isolated integration branch published at $staged"
-          echo "PASS: PE original first parent, modern upstream second parent, exact upstream tree"
+          echo "PASS: PE original first parent, upstream second parent; functional source exact minus two upstream workflow files"
